@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <!-- Application icon (touch / installed app). Same mark as the favicon with
+       the safe area the brand guidelines require: the glyph occupies the
+       central 60%, leaving clear space on every side so platform masking
+       cannot crop it. -->
+  <defs>
+    <linearGradient id="ring" x1="40" y1="24" x2="146" y2="156" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00E5FF"/>
+      <stop offset="1" stop-color="#00E5FF" stop-opacity=".38"/>
+    </linearGradient>
+    <radialGradient id="bloom" cx="90" cy="86" r="70" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00E5FF" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#00E5FF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="180" height="180" rx="40" fill="#030712"/>
+  <circle cx="90" cy="86" r="70" fill="url(#bloom)"/>
+
+  <path d="M90 30 142 60v60L90 150 38 120V60L90 30Z"
+        fill="none" stroke="url(#ring)" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M90 60v32l22 12.7"
+        fill="none" stroke="#00E5FF" stroke-width="8.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="90" cy="90" r="9" fill="#00E5FF"/>
+</svg>

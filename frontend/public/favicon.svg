@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <!-- INTELORA mark: a hexagonal aperture with a signal core. Abstract by
+       design, so it remains valid as the platform grows beyond its first
+       three asset categories. -->
+  <defs>
+    <linearGradient id="g" x1="6" y1="4" x2="34" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00E5FF"/>
+      <stop offset="1" stop-color="#00E5FF" stop-opacity=".4"/>
+    </linearGradient>
+  </defs>
+  <rect width="40" height="40" rx="9" fill="#030712"/>
+  <path d="M20 5.6 32.2 12.4v13.2L20 32.4 7.8 25.6V12.4L20 5.6Z"
+        fill="none" stroke="url(#g)" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M20 12.6v7.6l5.3 3.1"
+        fill="none" stroke="#00E5FF" stroke-width="2.4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="20" cy="20" r="2.2" fill="#00E5FF"/>
+</svg>
