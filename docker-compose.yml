@@ -1,0 +1,100 @@
+# =============================================================================
+# INTELORA — Full stack orchestration
+#
+#   database  PostgreSQL + TimescaleDB  (Telemetry Layer storage)
+#   backend   FastAPI + Digital Twin Engine + WebSocket broadcaster
+#   frontend  Static React build served by nginx with runtime config injection
+#
+# Usage:  cp .env.example .env  &&  docker compose up --build
+# =============================================================================
+
+name: intelora
+
+services:
+  # ---------------------------------------------------------------------------
+  # Time-series + relational store. Business data and telemetry live in the same
+  # instance but in separate tables; telemetry is a TimescaleDB hypertable.
+  # ---------------------------------------------------------------------------
+  database:
+    image: timescale/timescaledb:latest-pg16
+    container_name: intelora-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-intelora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-intelora}
+      POSTGRES_DB: ${POSTGRES_DB:-intelora}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - intelora-pgdata:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-intelora} -d ${POSTGRES_DB:-intelora}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Telemetry, Intelligence and Business Intelligence layers.
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: intelora-backend
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      INTELORA_ENV: ${INTELORA_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_USER: ${POSTGRES_USER:-intelora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-intelora}
+      POSTGRES_DB: ${POSTGRES_DB:-intelora}
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      TWIN_ENABLED: ${TWIN_ENABLED:-true}
+      TWIN_INTERVAL_SECONDS: ${TWIN_INTERVAL_SECONDS:-1.0}
+      TWIN_LAPTOP_CHARGERS: ${TWIN_LAPTOP_CHARGERS:-50}
+      TWIN_MOBILE_CHARGERS: ${TWIN_MOBILE_CHARGERS:-50}
+      TWIN_AIR_CONDITIONERS: ${TWIN_AIR_CONDITIONERS:-20}
+      TWIN_SEED: ${TWIN_SEED:-20260801}
+      INTELLIGENCE_INTERVAL_SECONDS: ${INTELLIGENCE_INTERVAL_SECONDS:-15.0}
+      TIMESCALE_COMPRESSION_ENABLED: ${TIMESCALE_COMPRESSION_ENABLED:-true}
+      TIMESCALE_CONTINUOUS_AGGREGATES_ENABLED: ${TIMESCALE_CONTINUOUS_AGGREGATES_ENABLED:-true}
+      TIMESCALE_CHUNK_INTERVAL_HOURS: ${TIMESCALE_CHUNK_INTERVAL_HOURS:-2}
+      TIMESCALE_COMPRESS_AFTER_HOURS: ${TIMESCALE_COMPRESS_AFTER_HOURS:-6}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Presentation layer. One image, promoted across environments: the API URL is
+  # injected at container start rather than baked in at build time.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: intelora-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      INTELORA_API_BASE_URL: ${INTELORA_API_BASE_URL:-http://localhost:8000}
+      INTELORA_WS_URL: ${INTELORA_WS_URL:-ws://localhost:8000/ws/live}
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+
+volumes:
+  intelora-pgdata:
+    name: intelora-pgdata

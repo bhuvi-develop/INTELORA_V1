@@ -1,0 +1,24 @@
+# =============================================================================
+# INTELORA Backend — Python dependencies
+#
+# Versions are pinned to a set verified to install and import on both CPython
+# 3.12 (the container runtime, see docker/backend.Dockerfile) and CPython 3.14
+# (current local development). Every pin below has prebuilt wheels for both, so
+# no compiler toolchain is needed in the image.
+# =============================================================================
+
+# --- Web framework -----------------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+
+# --- Validation and configuration --------------------------------------------
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# --- Persistence --------------------------------------------------------------
+SQLAlchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+alembic==1.18.5
+
+# --- WebSocket transport ------------------------------------------------------
+websockets==17.0.1

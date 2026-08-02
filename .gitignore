@@ -1,0 +1,42 @@
+# ---- Node / Frontend ----
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Python / Backend ----
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Environment ----
+.env
+.env.*
+!.env.example
+
+# ---- Database ----
+pgdata/
+*.dump
+
+# ---- Editors / OS ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Logs ----
+logs/
+*.log

@@ -1,0 +1,44 @@
+# =============================================================================
+# Build context exclusions.
+#
+# Without this, the context sent to the daemon includes frontend/node_modules
+# and backend/.venv — hundreds of megabytes that are rebuilt inside the image
+# anyway, and platform-specific binaries that would be wrong if they survived.
+# =============================================================================
+
+# ---- Dependencies (reinstalled inside the image) ----
+**/node_modules
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+
+# ---- Build output ----
+frontend/dist
+frontend/.vite
+**/*.egg-info
+
+# ---- Local environment ----
+.env
+.env.*
+!.env.example
+
+# ---- Version control and tooling ----
+.git
+.gitignore
+.vscode
+.idea
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# ---- Docs and artefacts not needed at build time ----
+docs
+assets
+*.md
+!frontend/README.md
+
+# ---- OS noise ----
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini
