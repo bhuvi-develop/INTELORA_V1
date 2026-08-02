@@ -328,15 +328,34 @@ class ApmRead(_AssetStamped):
     maintainability: float
     criticality: RiskLevel
     lifecycle_stage: LifecycleStage
+    #: How far through its service life, where the stage says which band.
+    lifecycle_score: float = 100.0
+    #: Share of the window spent working. Not availability — an asset can be
+    #: fully available and barely used, which is a different finding entirely.
+    utilization: float = 0.0
     failure_count: int
 
     cost_exposure: float
     maintenance_cost: float
+    energy_cost: float = 0.0
     maintenance_roi: float
     risk_score: float
     business_value: float
+    business_impact: BusinessImpact = BusinessImpact.LOW
     repair_or_replace: str
+
+    #: Position across the estate, within the asset's own group, and within its
+    #: category. Three questions with three different owners.
     rank: int | None = None
+    fleet_rank: int | None = None
+    type_rank: int | None = None
+
+    #: Movement since the previous computation. Zero on a first cycle, which is
+    #: the only honest answer when there is nothing to compare against.
+    health_trend: float = 0.0
+    failure_trend: float = 0.0
+    maintenance_trend: float = 0.0
+    utilization_trend: float = 0.0
 
 
 class ApmSummary(BaseModel):
@@ -349,6 +368,45 @@ class ApmSummary(BaseModel):
     total_maintenance_cost: float = 0.0
     assets_end_of_life: int = 0
     replace_recommended: int = 0
+
+    #: Extended position. Defaulted so the existing Cockpit and APM surfaces
+    #: keep deserialising unchanged while the new figures become available.
+    average_utilization: float = 0.0
+    average_lifecycle_score: float = 0.0
+    average_maintainability: float = 0.0
+    total_energy_cost: float = 0.0
+    total_business_value: float = 0.0
+    #: Assets whose loss would hurt most, by the shared business-impact scale.
+    critical_impact: int = 0
+    high_impact: int = 0
+    #: Assets carrying a risk score in the upper half of the scale.
+    high_risk_assets: int = 0
+    mean_health_trend: float = 0.0
+
+
+class ApmTrendPoint(BaseModel):
+    """One APM observation in a historical series.
+
+    Deliberately narrow: a trend view needs the measures that move, not the
+    forty fields of a full result. Sending the whole row for every point would
+    multiply the payload of a month-long chart by an order of magnitude for
+    data no axis renders.
+    """
+
+    computed_at: datetime
+    health_index: float = 0.0
+    availability: float = 0.0
+    reliability: float = 0.0
+    maintainability: float = 0.0
+    utilization: float = 0.0
+    lifecycle_score: float = 0.0
+    risk_score: float = 0.0
+    cost_exposure: float = 0.0
+    maintenance_cost: float = 0.0
+    energy_cost: float = 0.0
+    business_value: float = 0.0
+    failure_count: int = 0
+    asset_count: int = 0
 
 
 # --- Layer 6: Overall Equipment Efficiency -------------------------------------
@@ -383,6 +441,156 @@ class OeeSummary(BaseModel):
     by_asset_type: list[OeeRead] = Field(default_factory=list)
 
 
+class OeeAssetRead(_AssetStamped):
+    """OEE for one individual asset.
+
+    The level every rollup is built from, and the only one at which "why is
+    this low" has a concrete answer.
+    """
+
+    computed_at: datetime
+
+    availability: float
+    performance: float
+    quality: float
+    oee: float
+
+    rank: int | None = None
+    type_rank: int | None = None
+
+
+class OeeTrendPoint(BaseModel):
+    """OEE and its three factors at one instant, for charting."""
+
+    computed_at: datetime
+    availability: float = 0.0
+    performance: float = 0.0
+    quality: float = 0.0
+    oee: float = 0.0
+    asset_count: int = 0
+
+
+class OeeRollup(BaseModel):
+    """OEE averaged across a calendar bucket.
+
+    Daily, weekly and monthly views are bucketed in the database rather than
+    the browser. A month of fifteen-second computations is around 170,000 rows
+    per scope; sending those to a client so it can average them would defeat
+    the purpose of storing an aggregate at all.
+    """
+
+    #: Start of the bucket, in UTC. Weeks begin Monday, matching PostgreSQL's
+    #: ISO ``date_trunc('week', ...)`` so the boundary is not open to
+    #: interpretation.
+    bucket: datetime
+    period: str
+
+    availability: float = 0.0
+    performance: float = 0.0
+    quality: float = 0.0
+    oee: float = 0.0
+    #: Computations averaged into this bucket, so a partial day is visibly
+    #: partial rather than silently equal in weight to a complete one.
+    samples: int = 0
+
+
+# --- Comparison engine ----------------------------------------------------------
+
+
+class ComparisonMetric(BaseModel):
+    """One normalised KPI for one asset category.
+
+    ``normalised`` places the raw value on a 0–1 scale where higher is always
+    better, which is what makes categories with different units comparable at
+    all. ``raw`` is carried alongside so the figure stays explainable — a
+    normalised score nobody can trace back to a real measurement is not
+    intelligence, it is decoration.
+    """
+
+    key: str
+    label: str
+    raw: float | None = None
+    normalised: float = 0.0
+    unit: str | None = None
+    #: True when a lower raw value is the better outcome, such as cost.
+    lower_is_better: bool = False
+
+
+class CategoryComparison(BaseModel):
+    """Every comparable KPI for one asset category."""
+
+    asset_type: AssetType
+    label: str
+    asset_count: int = 0
+    #: Mean of the normalised metrics — one number to order categories by.
+    composite_score: float = 0.0
+    rank: int | None = None
+    metrics: list[ComparisonMetric] = Field(default_factory=list)
+
+
+class ComparisonReport(BaseModel):
+    """Executive comparison across asset categories.
+
+    Compares business KPIs only. Raw telemetry is never compared across
+    categories: an air conditioner draws 5.2 kW and a mobile charger 33 W, so
+    ranking them on power measures nothing but nameplate. Health, availability,
+    reliability, risk and cost are dimensionless or per-asset, and those are
+    the only terms on which categories can be judged against each other.
+    """
+
+    computed_at: datetime
+    categories: list[CategoryComparison] = Field(default_factory=list)
+    #: Metric keys present on every category, in display order.
+    metric_keys: list[str] = Field(default_factory=list)
+    best_category: AssetType | None = None
+    worst_category: AssetType | None = None
+
+
+class FleetRankingEntry(BaseModel):
+    """One asset group's position in the fleet ranking."""
+
+    asset_group_id: uuid.UUID | None = None
+    label: str
+    asset_count: int = 0
+    average_health_index: float = 0.0
+    average_availability: float = 0.0
+    average_oee: float = 0.0
+    total_cost_exposure: float = 0.0
+    composite_score: float = 0.0
+    rank: int | None = None
+
+
+class EnterpriseKpis(BaseModel):
+    """The executive position, assembled across every layer.
+
+    Exists so the Cockpit answers its ten questions from one payload rather
+    than composing six module endpoints in the browser — the same reason
+    :class:`IntelligenceSummary` exists, at the level above it.
+    """
+
+    generated_at: datetime
+
+    enterprise_health: float = 0.0
+    enterprise_oee: float = 0.0
+    enterprise_availability: float = 0.0
+    enterprise_performance: float = 0.0
+    enterprise_quality: float = 0.0
+
+    total_assets: int = 0
+    critical_assets: int = 0
+    high_risk_assets: int = 0
+    maintenance_due: int = 0
+
+    energy_efficiency: float = 0.0
+    total_energy_cost: float = 0.0
+    total_cost_exposure: float = 0.0
+    total_business_value: float = 0.0
+    critical_business_impact: int = 0
+
+    fleet_ranking: list[FleetRankingEntry] = Field(default_factory=list)
+    asset_ranking: list[ApmRead] = Field(default_factory=list)
+
+
 # --- Cross-layer --------------------------------------------------------------
 
 
@@ -399,3 +607,10 @@ class IntelligenceSummary(BaseModel):
     prescriptive: PrescriptiveSummary = Field(default_factory=PrescriptiveSummary)
     apm: ApmSummary = Field(default_factory=ApmSummary)
     oee: OeeSummary = Field(default_factory=OeeSummary)
+
+    #: Business Intelligence roll-ups, carried on the same payload so the live
+    #: stream keeps them current without a second channel. Optional rather than
+    #: defaulted structures: before the first computation there is no executive
+    #: position to report, and an all-zero one would read as a real answer.
+    enterprise: EnterpriseKpis | None = None
+    comparison: ComparisonReport | None = None

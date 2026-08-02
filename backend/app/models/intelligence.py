@@ -254,14 +254,50 @@ class ApmResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    #: Share of the window the asset was actually working. Distinct from
+    #: availability: an asset can be perfectly available and barely used, and
+    #: conflating the two hides the entire class of over-provisioned equipment.
+    utilization: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    #: Remaining service life as a 0–100 score. The stage above answers "which
+    #: band", this answers "how far through", which is what ranks two assets
+    #: sitting in the same band.
+    lifecycle_score: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+
     # --- Business ------------------------------------------------------------
     cost_exposure: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     maintenance_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    #: Cost of the energy this asset consumed over the window, priced at the
+    #: configured tariff. Kept separate from maintenance cost because they are
+    #: different budgets answering to different people.
+    energy_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     maintenance_roi: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     risk_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     business_value: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    #: How much the business should care, blending exposure with criticality.
+    #: Shares the scale used by the prescriptive layer so the two rank together.
+    business_impact: Mapped[BusinessImpact] = mapped_column(
+        enum_column(BusinessImpact),
+        nullable=False,
+        default=BusinessImpact.LOW,
+        index=True,
+    )
     repair_or_replace: Mapped[str] = mapped_column(String(24), nullable=False, default="repair")
     rank: Mapped[int | None] = mapped_column(Integer)
+    #: Position within this asset's own group, and within its category. A
+    #: fleet-wide rank alone is not actionable for a manager who owns one
+    #: fleet: a charger can be 90th overall and still the worst charger there is.
+    fleet_rank: Mapped[int | None] = mapped_column(Integer)
+    type_rank: Mapped[int | None] = mapped_column(Integer)
+
+    # --- Trends ----------------------------------------------------------------
+    # Deltas against the previous computation. Stored rather than derived on
+    # read because the comparison must be against the cycle that actually
+    # preceded this one; re-deriving later against whatever rows survive
+    # retention would silently change the answer.
+    health_trend: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    failure_trend: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    maintenance_trend: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    utilization_trend: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
 
 class OeeResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -290,3 +326,41 @@ class OeeResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     quality: Mapped[float] = mapped_column(Float, nullable=False)
     oee: Mapped[float] = mapped_column(Float, nullable=False)
     asset_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class OeeAssetResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Layer 6 — OEE for one individual asset.
+
+    Separate from :class:`OeeResult` rather than another ``scope_type`` on it.
+    The two are genuinely different shapes: a scope row is identified by a
+    label and an optional entity id, while this is identified by a foreign key
+    to a specific asset and must cascade when that asset is removed. Folding
+    the per-asset case into the scope table would mean a nullable foreign key
+    that is meaningful for exactly one scope value, and every asset query would
+    carry a scope filter that only ever has one answer.
+
+    Write volume also differs by two orders of magnitude — one row per asset
+    per cycle against a dozen scope rows — so the per-asset case earns its own
+    index rather than competing with the rollups for one.
+    """
+
+    __tablename__ = "oee_asset_results"
+    __table_args__ = (Index("ix_oee_asset_computed", "asset_id", "computed_at"),)
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    availability: Mapped[float] = mapped_column(Float, nullable=False)
+    performance: Mapped[float] = mapped_column(Float, nullable=False)
+    quality: Mapped[float] = mapped_column(Float, nullable=False)
+    oee: Mapped[float] = mapped_column(Float, nullable=False)
+
+    #: Position within the whole estate and within this asset's own category,
+    #: by OEE. Ranking at write time keeps the ordering consistent with the
+    #: factors it was derived from.
+    rank: Mapped[int | None] = mapped_column(Integer)
+    type_rank: Mapped[int | None] = mapped_column(Integer)

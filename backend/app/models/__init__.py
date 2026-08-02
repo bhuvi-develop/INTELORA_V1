@@ -11,6 +11,7 @@ from app.models.asset import Asset
 from app.models.intelligence import (
     AnomalyResult,
     ApmResult,
+    OeeAssetResult,
     OeeResult,
     PredictiveResult,
     PrescriptiveResult,
@@ -30,6 +31,7 @@ __all__ = [
     "Base",
     "Location",
     "MaintenanceLog",
+    "OeeAssetResult",
     "OeeResult",
     "Organization",
     "PredictiveResult",
