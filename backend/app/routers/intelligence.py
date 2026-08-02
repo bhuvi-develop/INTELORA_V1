@@ -59,13 +59,20 @@ from app.schemas.intelligence import (
     AnomalySummary,
     ApmRead,
     ApmSummary,
+    ApmTrendPoint,
     ChecklistItem,
+    ComparisonReport,
     ComponentHealthRead,
+    EnterpriseKpis,
+    FleetRankingEntry,
     MaintenanceCalendar,
     MaintenanceHistorySummary,
     MaintenanceLogRead,
+    OeeAssetRead,
     OeeRead,
+    OeeRollup,
     OeeSummary,
+    OeeTrendPoint,
     PredictiveRead,
     PredictiveSummary,
     PrescriptiveRead,
@@ -73,7 +80,22 @@ from app.schemas.intelligence import (
     PreventiveRead,
     PreventiveSummary,
 )
+from app.services.comparison_service import (
+    build_comparison,
+    build_enterprise_kpis,
+    build_fleet_ranking,
+)
 from app.services.health_engine import health_engine
+from app.services.performance_history import (
+    ROLLUP_PERIODS,
+    apm_history,
+    apm_trend,
+    oee_asset_latest,
+    oee_asset_trend,
+    oee_for_asset,
+    oee_rollup,
+    oee_scope_trend,
+)
 from app.services.intelligence_history import (
     log_to_read,
     anomaly_history,
@@ -693,6 +715,135 @@ async def apm_ranking(
 
 
 @apm_router.get(
+    "/history",
+    response_model=Envelope[list[ApmRead]],
+    summary="APM history",
+    description="Individual APM results within a named range. Answers "
+    "\"what did this asset look like at the time\", as opposed to the trend "
+    "endpoint's \"how has it moved\".",
+)
+async def apm_history_endpoint(
+    session: SessionDep,
+    time_range: Annotated[TimeRange, Query(alias="range")] = TimeRange.TODAY,
+    asset_id: Annotated[uuid.UUID | None, Query()] = None,
+    asset_type: Annotated[AssetType | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 300,
+) -> Envelope[list[ApmRead]]:
+    """Historical APM results for the selected window."""
+    start, end = window_for(time_range)
+    return envelope(
+        await apm_history(
+            session,
+            start=start,
+            end=end,
+            asset_id=asset_id,
+            asset_type=asset_type,
+            limit=limit,
+        )
+    )
+
+
+@apm_router.get(
+    "/trend",
+    response_model=Envelope[list[ApmTrendPoint]],
+    summary="APM trend",
+    description="Health, availability, reliability, utilisation, risk and cost "
+    "over time, averaged across the selected assets. With no filter this is "
+    "the fleet trajectory; with an asset selected it is that asset's own.",
+)
+async def apm_trend_endpoint(
+    session: SessionDep,
+    time_range: Annotated[TimeRange, Query(alias="range")] = TimeRange.TODAY,
+    asset_id: Annotated[uuid.UUID | None, Query()] = None,
+    asset_type: Annotated[AssetType | None, Query()] = None,
+    points: Annotated[int, Query(ge=2, le=1000)] = 240,
+) -> Envelope[list[ApmTrendPoint]]:
+    """APM measures over time."""
+    start, end = window_for(time_range)
+    return envelope(
+        await apm_trend(
+            session,
+            start=start,
+            end=end,
+            asset_id=asset_id,
+            asset_type=asset_type,
+            points=points,
+        )
+    )
+
+
+@apm_router.get(
+    "/comparison",
+    response_model=Envelope[ComparisonReport | None],
+    summary="Category comparison",
+    description="Compares laptop chargers, mobile chargers and air "
+    "conditioners on normalised business KPIs. Raw telemetry is never "
+    "compared: an air conditioner draws 5.2 kW and a mobile charger 33 W, so "
+    "ranking them on power measures nameplate rather than performance.",
+)
+async def apm_comparison(session: SessionDep) -> Envelope[ComparisonReport | None]:
+    """Executive comparison across asset categories."""
+    report = await build_comparison(session)
+    if report is None:
+        return envelope(None, message="No comparison available until the first pass.")
+    return envelope(report)
+
+
+@apm_router.get(
+    "/fleet-ranking",
+    response_model=Envelope[list[FleetRankingEntry]],
+    summary="Fleet ranking",
+    description="Asset groups ranked against each other. A fleet is what an "
+    "operations manager actually owns, so this is the level at which an "
+    "estate-wide figure becomes somebody's to-do list.",
+)
+async def apm_fleet_ranking(session: SessionDep) -> Envelope[list[FleetRankingEntry]]:
+    """Asset groups ordered by composite standing."""
+    return envelope(await build_fleet_ranking(session))
+
+
+@apm_router.get(
+    "/enterprise",
+    response_model=Envelope[EnterpriseKpis | None],
+    summary="Enterprise KPIs",
+    description="The executive position across every layer in one payload: "
+    "enterprise health and OEE, critical and high-risk counts, maintenance "
+    "due, energy efficiency, cost exposure, business value, and both rankings.",
+)
+async def apm_enterprise(session: SessionDep) -> Envelope[EnterpriseKpis | None]:
+    """Cross-layer executive summary."""
+    kpis = await build_enterprise_kpis(session)
+    if kpis is None:
+        return envelope(None, message="No results computed yet.")
+    return envelope(kpis)
+
+
+@apm_router.get(
+    "/{asset_id}/trend",
+    response_model=Envelope[list[ApmTrendPoint]],
+    summary="APM trend for one asset",
+    description="The drill-down trajectory for a single asset.",
+)
+async def apm_asset_trend(
+    asset_id: uuid.UUID,
+    session: SessionDep,
+    time_range: Annotated[TimeRange, Query(alias="range")] = TimeRange.TODAY,
+    points: Annotated[int, Query(ge=2, le=1000)] = 240,
+) -> Envelope[list[ApmTrendPoint]]:
+    """One asset's APM history as a series."""
+    start, end = window_for(time_range)
+    return envelope(
+        await apm_trend(
+            session, start=start, end=end, asset_id=asset_id, points=points
+        )
+    )
+
+
+# Registered last on purpose, for the same reason as the anomaly router above:
+# a path parameter declared before the literal segments would swallow
+# `/history`, `/trend`, `/comparison`, `/fleet-ranking` and `/enterprise` and
+# reject each of them as a malformed UUID.
+@apm_router.get(
     "/{asset_id}", response_model=Envelope[ApmRead | None], summary="APM for one asset"
 )
 async def apm_for_asset(
@@ -745,3 +896,123 @@ async def get_oee_history(
         )
     ).all()
     return envelope([OeeRead.model_validate(row) for row in reversed(rows)])
+
+
+@oee_router.get(
+    "/assets",
+    response_model=Envelope[list[OeeAssetRead]],
+    summary="OEE per asset",
+    description="Every asset's own OEE, best first. This is the level all the "
+    "scope rollups are built from, and the only one at which \"why is this "
+    "number low\" has a concrete answer.",
+)
+async def oee_assets(
+    session: SessionDep,
+    asset_type: Annotated[AssetType | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 500,
+) -> Envelope[list[OeeAssetRead]]:
+    """Latest per-asset OEE across the fleet."""
+    return envelope(
+        await oee_asset_latest(session, asset_type=asset_type, limit=limit)
+    )
+
+
+@oee_router.get(
+    "/trend",
+    response_model=Envelope[list[OeeTrendPoint]],
+    summary="OEE trend",
+    description="OEE and its three factors over time at an aggregation scope. "
+    "Omit `scope_label` to average every entity at that level, or supply one "
+    "to follow a single building, department or fleet.",
+)
+async def oee_trend(
+    session: SessionDep,
+    time_range: Annotated[TimeRange, Query(alias="range")] = TimeRange.TODAY,
+    scope: Annotated[ScopeType, Query()] = ScopeType.ENTERPRISE,
+    scope_label: Annotated[str | None, Query()] = None,
+    asset_type: Annotated[AssetType | None, Query()] = None,
+    points: Annotated[int, Query(ge=2, le=1000)] = 240,
+) -> Envelope[list[OeeTrendPoint]]:
+    """Efficiency trajectory at one scope."""
+    start, end = window_for(time_range)
+    return envelope(
+        await oee_scope_trend(
+            session,
+            start=start,
+            end=end,
+            scope=scope,
+            scope_label=scope_label,
+            asset_type=asset_type,
+            points=points,
+        )
+    )
+
+
+@oee_router.get(
+    "/rollup",
+    response_model=Envelope[list[OeeRollup]],
+    summary="Daily, weekly and monthly OEE",
+    description="OEE averaged into calendar buckets. Bucketing runs in "
+    "PostgreSQL: a month of fifteen-second computations is around 170,000 rows "
+    "per scope, and averaging those in the browser would transfer two orders "
+    "of magnitude more data than the chart draws. Each bucket reports how many "
+    "computations it averaged, so a partial period is visibly partial.",
+)
+async def oee_rollup_endpoint(
+    session: SessionDep,
+    period: Annotated[str, Query(pattern="^(daily|weekly|monthly)$")] = "daily",
+    time_range: Annotated[TimeRange, Query(alias="range")] = TimeRange.LAST_30_DAYS,
+    scope: Annotated[ScopeType, Query()] = ScopeType.ENTERPRISE,
+    asset_type: Annotated[AssetType | None, Query()] = None,
+) -> Envelope[list[OeeRollup]]:
+    """Calendar-bucketed OEE."""
+    start, end = window_for(time_range)
+    return envelope(
+        await oee_rollup(
+            session,
+            start=start,
+            end=end,
+            period=period,
+            scope=scope,
+            asset_type=asset_type,
+        ),
+        message=f"Bucketed by {ROLLUP_PERIODS[period]}.",
+    )
+
+
+@oee_router.get(
+    "/asset/{asset_id}",
+    response_model=Envelope[OeeAssetRead | None],
+    summary="OEE for one asset",
+)
+async def oee_single_asset(
+    asset_id: uuid.UUID, session: SessionDep
+) -> Envelope[OeeAssetRead | None]:
+    """Latest OEE for a single asset."""
+    result = await oee_for_asset(session, asset_id)
+    if result is None:
+        return envelope(None, message="No OEE computed for this asset yet.")
+    return envelope(result)
+
+
+@oee_router.get(
+    "/asset/{asset_id}/trend",
+    response_model=Envelope[list[OeeTrendPoint]],
+    summary="OEE trend for one asset",
+    description="Read from the per-asset table rather than reconstructed from "
+    "a rollup, which cannot be done — an average has already discarded the "
+    "individual terms that produced it.",
+)
+async def oee_single_asset_trend(
+    asset_id: uuid.UUID,
+    session: SessionDep,
+    time_range: Annotated[TimeRange, Query(alias="range")] = TimeRange.TODAY,
+    points: Annotated[int, Query(ge=2, le=1000)] = 240,
+) -> Envelope[list[OeeTrendPoint]]:
+    """One asset's efficiency trajectory."""
+    start, end = window_for(time_range)
+    return envelope(
+        await oee_asset_trend(
+            session, asset_id=asset_id, start=start, end=end, points=points
+        )
+    )

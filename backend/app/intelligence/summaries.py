@@ -40,6 +40,11 @@ from app.schemas.intelligence import (
     PrescriptiveSummary,
     PreventiveSummary,
 )
+from app.services.comparison_service import (
+    HIGH_RISK_THRESHOLD,
+    build_comparison,
+    build_enterprise_kpis,
+)
 from app.utils.time import start_of_utc_day, utc_now
 
 
@@ -261,6 +266,21 @@ async def build_apm_summary(session: AsyncSession) -> ApmSummary:
             1 for r in rows if r.lifecycle_stage is LifecycleStage.END_OF_LIFE
         ),
         replace_recommended=sum(1 for r in rows if r.repair_or_replace == "replace"),
+        average_utilization=round(sum(r.utilization for r in rows) / count, 4),
+        average_lifecycle_score=round(sum(r.lifecycle_score for r in rows) / count, 2),
+        average_maintainability=round(sum(r.maintainability for r in rows) / count, 4),
+        total_energy_cost=round(sum(r.energy_cost for r in rows), 4),
+        total_business_value=round(sum(r.business_value for r in rows), 2),
+        critical_impact=sum(
+            1 for r in rows if r.business_impact is BusinessImpact.CRITICAL
+        ),
+        high_impact=sum(1 for r in rows if r.business_impact is BusinessImpact.HIGH),
+        high_risk_assets=sum(
+            1 for r in rows if r.risk_score >= HIGH_RISK_THRESHOLD
+        ),
+        # Mean movement since the previous cycle: whether the fleet as a whole
+        # is recovering or degrading, which no single asset's trend can say.
+        mean_health_trend=round(sum(r.health_trend for r in rows) / count, 3),
     )
 
 
@@ -293,7 +313,15 @@ async def build_oee_summary(session: AsyncSession) -> OeeSummary:
 
 
 async def build_intelligence_summary(session: AsyncSession) -> IntelligenceSummary:
-    """Every layer's headline verdict, for Cockpit section 4."""
+    """Every layer's headline verdict, for Cockpit section 4.
+
+    Carries the Business Intelligence roll-ups alongside the six layer
+    summaries. They travel on this payload rather than a channel of their own
+    because the runner already broadcasts it after every pass, and the
+    executive position is stale the moment the layers beneath it move — a
+    separate channel would have to be published at the same instant anyway,
+    with the added risk of the two arriving out of step.
+    """
     return IntelligenceSummary(
         anomaly=await build_anomaly_summary(session),
         predictive=await build_predictive_summary(session),
@@ -301,4 +329,6 @@ async def build_intelligence_summary(session: AsyncSession) -> IntelligenceSumma
         prescriptive=await build_prescriptive_summary(session),
         apm=await build_apm_summary(session),
         oee=await build_oee_summary(session),
+        enterprise=await build_enterprise_kpis(session),
+        comparison=await build_comparison(session),
     )

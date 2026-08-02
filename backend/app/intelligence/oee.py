@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.digital_twin.profiles import get_profile
 from app.intelligence.context import AssetWindow, IntelligenceContext
-from app.models import OeeResult
+from app.models import OeeAssetResult, OeeResult
 from app.schemas.enums import AssetType, ConnectivityState, ScopeType
 from app.services.live_state import live_state
 
@@ -184,6 +184,39 @@ async def run(session: AsyncSession, context: IntelligenceContext) -> int:
         return 0
 
     written = 0
+
+    # --- Per-asset OEE ---------------------------------------------------------
+    # The individual asset is the level every rollup above is built from, and
+    # the only level at which "why is this number low" has a concrete answer.
+    # Persisting it is what makes the OEE drill-down answerable at all; without
+    # these rows the factors are computed each cycle and immediately lost, and
+    # every asset-level question has to be answered from an aggregate that has
+    # already averaged the detail away.
+    #
+    # Ranked here rather than on read so the ordering is stamped alongside the
+    # factors that produced it — a later re-rank against a different cycle's
+    # rows would disagree with the numbers displayed beside it.
+    ordered = sorted(per_asset.items(), key=lambda item: item[1].oee, reverse=True)
+    type_position: dict[AssetType, int] = {}
+
+    for position, (asset_id, factors) in enumerate(ordered, start=1):
+        window = context.windows[asset_id]
+        category = window.identity.asset_type
+        type_position[category] = type_position.get(category, 0) + 1
+
+        session.add(
+            OeeAssetResult(
+                asset_id=asset_id,
+                computed_at=context.computed_at,
+                availability=factors.availability,
+                performance=factors.performance,
+                quality=factors.quality,
+                oee=round(factors.oee, 4),
+                rank=position,
+                type_rank=type_position[category],
+            )
+        )
+        written += 1
 
     session.add(
         _result(
